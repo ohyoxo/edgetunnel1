@@ -14,13 +14,14 @@ import {
   closeWebSocket,
 } from 'vless-js';
 import { connect, Socket } from 'node:net';
-import { Duplex, Readable } from 'stream';
+import { Duplex, Readable, Writable } from 'stream';
 import {
   TransformStream,
   ReadableStream,
   WritableStream,
 } from 'node:stream/web';
 const port = process.env.PORT;
+const smallRAM = process.env.SMALLRAM || false;
 const userID = process.env.UUID || '';
 //'ipv4first' or 'verbatim'
 const dnOder = process.env.DNSORDER || 'verbatim';
@@ -140,6 +141,7 @@ vlessWServer.on('connection', async function connection(ws, request) {
             } `;
             if (hasError) {
               controller.error(`[${address}:${portWithRandomLog}] ${message} `);
+              return;
             }
             // const addressType = requestAddr >> 42
             // const addressLength = requestAddr & 0x0f;
@@ -147,9 +149,13 @@ vlessWServer.on('connection', async function connection(ws, request) {
             vlessResponseHeader = new Uint8Array([vlessVersion![0], 0]);
             const rawClientData = vlessBuffer.slice(rawDataIndex!);
             if (isUDP) {
+              // 如果仅仅是针对DNS， 这样是没有必要的。因为xray 客户端 DNS A/AAA query 都有长度 header，
+              // 所以直接和 DNS server over TCP。所以无需 runtime 支持 UDP API。
+              // DNS over UDP 和 TCP 唯一的区别就是 Header section format 多了长度
+              //  https://www.rfc-editor.org/rfc/rfc1035#section-4.2.2
               udpClientStream = makeUDPSocketStream(portRemote, address);
               const writer = udpClientStream.writable.getWriter();
-              writer.write(rawClientData).catch(error=>console.log)
+              writer.write(rawClientData).catch((error) => console.log);
               writer.releaseLock();
               remoteConnectionReadyResolve(udpClientStream);
             } else {
@@ -162,6 +168,7 @@ vlessWServer.on('connection', async function connection(ws, request) {
             // if (udpClientStream ) {
             //   udpClientStream.writable.close();
             // }
+            // (remoteConnection as Socket).end();
             console.log(
               `[${address}:${portWithRandomLog}] readableWebSocketStream is close`
             );
@@ -190,9 +197,34 @@ vlessWServer.on('connection', async function connection(ws, request) {
     // remote --> ws
     let responseStream = udpClientStream?.readable;
     if (remoteConnection) {
-      responseStream = Readable.toWeb(remoteConnection);
+      // ignore type error
+      // @ts-ignore
+      responseStream = Readable.toWeb(remoteConnection, {
+        strategy: {
+          // due to nodejs issue https://github.com/nodejs/node/issues/46347
+          highWaterMark: smallRAM ? 100 : 1000, // 1000 * tcp mtu(64kb) = 64mb
+        },
+      });
     }
+    let count = 0;
 
+    // ws.send(vlessResponseHeader!);
+    // remoteConnection.pipe(
+    //   new Writable({
+    //     async write(chunk: Uint8Array, encoding, callback) {
+    //       count += chunk.byteLength;
+    //       console.log('ws write', count / (1024 * 1024));
+    //       console.log(
+    //         '-----++++',
+    //         (remoteConnection as Socket).bytesRead / (1024 * 1024)
+    //       );
+    //       if (ws.readyState === ws.OPEN) {
+    //         await wsAsyncWrite(ws, chunk);
+    //         callback();
+    //       }
+    //     },
+    //   })
+    // );
     // if readable not pipe can't wait fro writeable write method
     await responseStream.pipeTo(
       new WritableStream({
@@ -202,9 +234,21 @@ vlessWServer.on('connection', async function connection(ws, request) {
           }
         },
         async write(chunk: Uint8Array, controller) {
-          // console.log('ws write', chunk);
+          // count += chunk.byteLength;
+          // console.log('ws write', count / (1024 * 1024));
+          // console.log(
+          //   '-----++++',
+          //   (remoteConnection as Socket).bytesRead / (1024 * 1024),
+          //   (remoteConnection as Socket).readableHighWaterMark
+          // );
+          // we have issue there, maybe beacsue nodejs web stream has bug.
+          // socket web stream will read more data from socket
           if (ws.readyState === ws.OPEN) {
             await wsAsyncWrite(ws, chunk);
+          } else {
+            if (!(remoteConnection as Socket).destroyed) {
+              (remoteConnection as Socket).destroy();
+            }
           }
         },
         close() {
@@ -241,7 +285,8 @@ server.on('upgrade', function upgrade(request, socket, head) {
 server.listen(
   {
     port: port,
-    host: '0.0.0.0',
+    host: '::',
+    // host: '0.0.0.0',
   },
   () => {
     console.log(`server listen in http://127.0.0.1:${port}`);
@@ -298,8 +343,15 @@ function makeUDPSocketStream(portRemote, address) {
     start(controller) {
       /* … */
       udpClient.on('message', (message, info) => {
+        // console.log(
+        //   `udp package received ${info.size} bytes from ${info.address}:${info.port}`,
+        //   Buffer.from(message).toString('hex')
+        // );
         controller.enqueue(
-          Buffer.concat([new Uint8Array([0, info.size]), message])
+          Buffer.concat([
+            new Uint8Array([(info.size >> 8) & 0xff, info.size & 0xff]),
+            message,
+          ])
         );
       });
       udpClient.on('error', (error) => {
@@ -318,16 +370,20 @@ function makeUDPSocketStream(portRemote, address) {
           chunk.slice(index + 2, index + 2 + udpPakcetLength)
         );
         index = index + 2 + udpPakcetLength;
-       await new Promise((resolve, reject)=>{
-        udpClient.send(udpData, portRemote, address, (err) => {
-          if (err) {
-            console.log('udps send error', err);
-            controller.error(`Failed to send UDP packet !! ${err}`);
-            safeCloseUDP(udpClient);
-          }
-          resolve(true)
+        await new Promise((resolve, reject) => {
+          udpClient.send(udpData, portRemote, address, (err) => {
+            if (err) {
+              console.log('udps send error', err);
+              controller.error(`Failed to send UDP packet !! ${err}`);
+              safeCloseUDP(udpClient);
+            }
+            // console.log(
+            //   'udp package sent',
+            //   Buffer.from(udpData).toString('hex')
+            // );
+            resolve(true);
+          });
         });
-       })
         index = index;
       }
 
@@ -344,12 +400,10 @@ function makeUDPSocketStream(portRemote, address) {
   return transformStream;
 }
 
-
-function safeCloseUDP(client: UDPSocket){
-  try{
-    client.close()
-  }catch(error){
+function safeCloseUDP(client: UDPSocket) {
+  try {
+    client.close();
+  } catch (error) {
     console.log('error close udp', error);
   }
-
 }

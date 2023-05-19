@@ -3,12 +3,21 @@ export function vlessJs(): string {
   return 'vless-js';
 }
 
+const WS_READY_STATE_OPEN = 1;
+
 export function delay(ms: number) {
   return new Promise((resolve, rej) => {
     setTimeout(resolve, ms);
   });
 }
 
+/**
+ * we need make sure read websocket message in order
+ * @param ws
+ * @param earlyDataHeader
+ * @param log
+ * @returns
+ */
 export function makeReadableWebSocketStream(
   ws: WebSocket | any,
   earlyDataHeader: string,
@@ -18,6 +27,7 @@ export function makeReadableWebSocketStream(
   return new ReadableStream<ArrayBuffer>({
     start(controller) {
       ws.addEventListener('message', async (e: { data: ArrayBuffer }) => {
+        // console.log('-----', e.data);
         // is stream is cancel, skip controller.enqueue
         if (readableStreamCancel) {
           return;
@@ -29,6 +39,10 @@ export function makeReadableWebSocketStream(
         // https://streams.spec.whatwg.org/#example-rs-push-backpressure
         controller.enqueue(vlessBuffer);
       });
+
+      // The event means that the client closed the client -> server stream.
+      // However, the server -> client stream is still open until you call close() on the server side.
+      // The WebSocket protocol says that a separate close message must be sent in each direction to fully close the socket.
       ws.addEventListener('error', (e: any) => {
         log('socket has error');
         readableStreamCancel = true;
@@ -50,7 +64,7 @@ export function makeReadableWebSocketStream(
       const { earlyData, error } = base64ToArrayBuffer(earlyDataHeader);
       if (error) {
         log(`earlyDataHeader has invaild base64`);
-        closeWebSocket(ws);
+        safeCloseWebSocket(ws);
         return;
       }
       if (earlyData) {
@@ -68,7 +82,7 @@ export function makeReadableWebSocketStream(
         return;
       }
       readableStreamCancel = true;
-      closeWebSocket(ws);
+      safeCloseWebSocket(ws);
     },
   });
 }
@@ -88,9 +102,13 @@ function base64ToArrayBuffer(base64Str: string) {
   }
 }
 
-export function closeWebSocket(socket: WebSocket | any) {
-  if (socket.readyState === socket.OPEN) {
-    socket.close();
+export function safeCloseWebSocket(socket: WebSocket | any) {
+  try {
+    if (socket.readyState === WS_READY_STATE_OPEN) {
+      socket.close();
+    }
+  } catch (error) {
+    console.error('safeCloseWebSocket error', error);
   }
 }
 

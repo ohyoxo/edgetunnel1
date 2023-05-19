@@ -17,14 +17,13 @@ const index401 = `
     </h2>
     <h3> You must use same UUID for login this page after config valid UUID Environment Variables
     </h3>
-    <h2>Please refer to <a
-            href="https://github.com/zizifn/edgetunnel/blob/main/doc/edge-tunnel-deno.md#%E6%B5%81%E7%A8%8B%E6%BC%94%E7%A4%BA">deno
-            deploy guide</a>
+    <h2>
+      Please refer to
+      <a
+        href="https://edgetunnel.114567.xyz/guide/cf-pages.html#%E5%A1%AB%E5%86%99-pages-build-%E4%BF%A1%E6%81%AF"
+        >Cloudflare pages deploy guide</a
+      >
     </h2>
-
-    <h3>Or maybe check below <a
-            href="https://raw.githubusercontent.com/zizifn/edgetunnel/main/doc/deno-deploy2.gif">GIF</a> </h3>
-    <img src="https://raw.githubusercontent.com/zizifn/edgetunnel/main/doc/deno-deploy2.gif" alt="guide" srcset="">
     <script>
         let uuid = URL.createObjectURL(new Blob([])).substr(-36);
         document.getElementById('uuidSpan').textContent = uuid
@@ -33,4 +32,24 @@ const index401 = `
 
 </html>`;
 
-export { index401 };
+const page404 = `
+<html>
+<head><title>404 Not Found</title></head>
+<body>
+<center><h1>404 Not Found</h1></center>
+<hr><center>nginx/1.23.4</center>
+</body>
+</html>
+`;
+
+async function digestMessage(message: string) {
+  const msgUint8 = new TextEncoder().encode(message); // encode as (utf-8) Uint8Array
+  const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8); // hash the message
+  const hashArray = Array.from(new Uint8Array(hashBuffer)); // convert buffer to byte array
+  const hashHex = hashArray
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join(''); // convert bytes to hex string
+  return hashHex;
+}
+
+export { index401, page404, digestMessage };

@@ -41,7 +41,7 @@ export function EdgeApp() {
             handleShare={handleShare}
             v2option={v2Option}
           ></ShareActions>
-          <SetUpAlert></SetUpAlert>
+          {/* <SetUpAlert></SetUpAlert> */}
           <ShareAnything handleShare={handleShare}></ShareAnything>
         </div>
       </div>
@@ -209,7 +209,7 @@ function QRcodeImg({ text }: { text: string }) {
   }
 
   return (
-    <div className="flex flex-col border border-blue-300 overflow-hidden w-[500px] h-[420px] justify-start items-center">
+    <div className="flex flex-col border border-blue-300 overflow-hidden w-auto h-auto justify-start items-center">
       <img
         src={codeImg}
         width="350"
@@ -217,11 +217,11 @@ function QRcodeImg({ text }: { text: string }) {
         alt="二维码"
         className="border-spacing-1"
       />
-      <div className="flex flex-grow w-full bg-gray-200">
-        <span className="flex-grow break-normal overflow-scroll w-4/5">
+      <div className="flex flex-grow w-auto bg-gray-200">
+        <span className="flex-grow break-all break-word overflow-hidden w-4/5 max-w-2xl">
           {text}
         </span>
-        <div className="w-6 h-6 ml-auto">
+        <div className="w-6 h-6 ml-auto mr-5px">
           <svg
             xmlns="http://www.w3.org/2000/svg"
             fill="none"
@@ -302,40 +302,57 @@ function ShareActions({
   handleShare: (text: string) => void;
   v2option: V2Option;
 }) {
+  useEffect(() => {
+    handleShare(getVlessURL());
+  }, [v2option]);
   function getPageURL() {
     return window.location.href;
   }
   function getVlessURL() {
     const url = new URL(window.location.href);
     const uuid = url.pathname.split('/').find(uuidValidate);
-    let pathParam = '';
+    let port = url.port;
+    const isHttps = url.protocol === 'https:';
+    if (!port) {
+      if (isHttps) {
+        port = '443';
+      } else {
+        port = '80';
+      }
+    }
+    let pathParam = url.searchParams.get('wspath') || '';
     if (v2option.ws0Rtt) {
       pathParam = `${pathParam}?ed=2048`;
     }
     if (pathParam) {
       pathParam = `&path=${encodeURIComponent(pathParam)}`;
     }
+    let tls = '';
+    if (isHttps) {
+      tls = `&security=tls&fp=randomized&sni=${url.hostname}`;
+    }
     return `vless://${uuid}@${
       url.hostname
-    }:443?encryption=none&security=tls&type=ws${pathParam || ''}#${
-      url.hostname
-    }`;
+    }:${port}?encryption=none${tls}&type=ws&host=${url.hostname}${
+      pathParam || ''
+    }#${url.hostname}`;
   }
   return (
     <span className="inline-flex self-center mt-4 rounded-md shadow-sm isolate">
+      <button
+        onClick={() => handleShare(getVlessURL())}
+        type="button"
+        className="rounded-md bg-indigo-600 px-3.5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+      >
+        分享 V2ray
+      </button>
+
       <button
         onClick={() => handleShare(getPageURL())}
         type="button"
         className="relative inline-flex items-center px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-l-md hover:border-indigo-500 focus:z-10 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
       >
         分享本页
-      </button>
-      <button
-        onClick={() => handleShare(getVlessURL())}
-        type="button"
-        className="relative inline-flex items-center px-4 py-2 -ml-px text-sm font-medium text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 focus:z-10 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-      >
-        分享 V2ray
       </button>
     </span>
   );
